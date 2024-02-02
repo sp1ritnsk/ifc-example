@@ -20,7 +20,9 @@ import {
   ComponentDatatype,
   GeometryInstance,
   Geometry,
-  Transforms
+  Transforms,
+  sampleTerrainMostDetailed,
+  Cartographic,
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import "./css/main.css";
@@ -29,8 +31,13 @@ import { IfcAPI } from "web-ifc";
 // const { IfcAPI } = require('web-ifc')
 // CesiumJS has a default access token built in but it's not meant for active use.
 // please set your own access token can be found at: https://cesium.com/ion/tokens.
-Ion.defaultAccessToken =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI1MmVjMGM5Yy1kOTU4LTQzNjYtYWM0Yy1hY2E4ZmJlMGMwM2UiLCJpZCI6MTUwNDcxLCJpYXQiOjE2ODgxMjQ1MTR9.UppNfVjKb3Dt9Z5fONTlUA1uzifI7nz3rG_7ubJtxIg";
+
+
+let placement = {
+  lat: 51.1194751,
+  lon: 71.4367857,
+  height: 400,
+};
 
 // Initialize the Cesium Viewer in the HTML element with the `cesiumContainer` ID.
 const viewer = new Viewer("cesiumContainer", {
@@ -69,9 +76,6 @@ const extractCapabilities = async (ifcApi, url) => {
   const format = getFormat(url || "Format not defined");
   const properties = {};
   ifcApi.CloseModel(modelID);
-  console.log("version", version);
-  console.log("format", format);
-  console.log("properties", properties);
   return {
     version,
     format,
@@ -101,15 +105,15 @@ const ifcDataToJSON = async ({ data, ifcApi }) => {
       const placedGeometry = placedGeometries.get(i);
       const ifcGeometry = ifcApi.GetGeometry(
         modelID,
-        placedGeometry.geometryExpressID,
+        placedGeometry.geometryExpressID
       ); // eslint-disable-line
       const ifcVertices = ifcApi.GetVertexArray(
         ifcGeometry.GetVertexData(),
-        ifcGeometry.GetVertexDataSize(),
+        ifcGeometry.GetVertexDataSize()
       ); // eslint-disable-line
       const ifcIndices = ifcApi.GetIndexArray(
         ifcGeometry.GetIndexData(),
-        ifcGeometry.GetIndexDataSize(),
+        ifcGeometry.GetIndexDataSize()
       ); // eslint-disable-line
       const positions = new Float64Array(ifcVertices.length / 2);
       const normals = new Float32Array(ifcVertices.length / 2);
@@ -203,93 +207,90 @@ const loadIfcModel = async (url) => {
 
 const updatePrimitivesPosition = (primitives, center) => {
   for (let i = 0; i < primitives.length; i++) {
-      const primitive = primitives.get(i);
-      primitive.modelMatrix = Transforms.eastNorthUpToFixedFrame(
-          // review the center properties
-          // based on other existing layer parameters
-          Cartesian3.fromDegrees(...(center ? [
-              center[0],
-              center[1],
-              center[2]
-          ] : [0, 0, 0]))
-      );
+    const primitive = primitives.get(i);
+    primitive.modelMatrix = Transforms.eastNorthUpToFixedFrame(
+      // review the center properties
+      // based on other existing layer parameters
+      Cartesian3.fromDegrees(
+        ...(center ? [center[0], center[1], center[2]] : [0, 0, 0])
+      )
+    );
   }
 };
 
-const getGeometryInstances = ({
-  meshes
-}) => {
+const getGeometryInstances = ({ meshes }) => {
   return meshes
-      .map((mesh) => mesh.geometry.map(({
-          color,
-          positions,
-          normals,
-          indices,
-          flatTransformation
-      }) => {
+    .map((mesh) =>
+      mesh.geometry.map(
+        ({ color, positions, normals, indices, flatTransformation }) => {
           const rotationMatrix = Matrix4.fromTranslationQuaternionRotationScale(
-              new Cartesian3(0.0, 0.0, 0.0),       // 0,0
-              Quaternion.fromAxisAngle(            // 90 deg
-                  new Cartesian3(1.0, 0.0, 0.0),
-                  Math.PI / 2
-              ),
-              new Cartesian3(1.0, 1.0, 1.0),
-              new Matrix4()
+            new Cartesian3(0.0, 0.0, 0.0), // 0,0
+            Quaternion.fromAxisAngle(
+              // 90 deg
+              new Cartesian3(1.0, 0.0, 0.0),
+              Math.PI / 2
+            ),
+            new Cartesian3(1.0, 1.0, 1.0),
+            new Matrix4()
           );
           const transformedPositions = positions;
           const transformedNormals = normals;
-          let geometryInstance =  new GeometryInstance({
-              id: mesh.id,
-              modelMatrix: Matrix4.multiply(
-                  rotationMatrix,
-                  flatTransformation,
-                  new Matrix4()
-              ),
-              geometry: new Geometry({
-                  attributes: {
-                      position: new GeometryAttribute({
-                          componentDatatype: ComponentDatatype.DOUBLE,
-                          componentsPerAttribute: 3,
-                          values: new Float64Array(transformedPositions)
-                      }),
-                      normal: new GeometryAttribute({
-                          componentDatatype: ComponentDatatype.FLOAT,
-                          componentsPerAttribute: 3,
-                          values: transformedNormals,
-                          normalize: true
-                      })
-                  },
-                  indices,
-                  primitiveType: PrimitiveType.TRIANGLES,
-                  boundingSphere: BoundingSphere.fromVertices(transformedPositions)
-              }),
+          let geometryInstance = new GeometryInstance({
+            id: mesh.id,
+            modelMatrix: Matrix4.multiply(
+              rotationMatrix,
+              flatTransformation,
+              new Matrix4()
+            ),
+            geometry: new Geometry({
               attributes: {
-                  color: ColorGeometryInstanceAttribute.fromColor(new Color(
-                      color.x,
-                      color.y,
-                      color.z,
-                      color.w
-                  ))
-              }
+                position: new GeometryAttribute({
+                  componentDatatype: ComponentDatatype.DOUBLE,
+                  componentsPerAttribute: 3,
+                  values: new Float64Array(transformedPositions),
+                }),
+                normal: new GeometryAttribute({
+                  componentDatatype: ComponentDatatype.FLOAT,
+                  componentsPerAttribute: 3,
+                  values: transformedNormals,
+                  normalize: true,
+                }),
+              },
+              indices,
+              primitiveType: PrimitiveType.TRIANGLES,
+              boundingSphere: BoundingSphere.fromVertices(transformedPositions),
+            }),
+            attributes: {
+              color: ColorGeometryInstanceAttribute.fromColor(
+                new Color(color.x, color.y, color.z, color.w)
+              ),
+            },
           });
           geometryInstance.originalOpacity = color.w;
           return geometryInstance;
-      })).flat();
+        }
+      )
+    )
+    .flat();
 };
 
 const createPrimitiveFromMeshes = (meshes, options, center, primitiveName) => {
   const primitive = new Primitive({
-      geometryInstances: getGeometryInstances({
-          meshes: meshes.filter(mesh => primitiveName === 'translucentPrimitive' ? !mesh.geometry.every(({ color }) => color.w === 1) : !!mesh.geometry.every(({ color }) => color.w === 1)),
-          center,
-          options
-      }),
-      releaseGeometryInstances: false,
-      appearance: new PerInstanceColorAppearance({
-          translucent: primitiveName === 'translucentPrimitive' ? true : false
-      }),
-      asynchronous: false,
-      allowPicking: true
+    geometryInstances: getGeometryInstances({
+      meshes: meshes.filter((mesh) =>
+        primitiveName === "translucentPrimitive"
+          ? !mesh.geometry.every(({ color }) => color.w === 1)
+          : !!mesh.geometry.every(({ color }) => color.w === 1)
+      ),
+      center,
+      options,
+    }),
+    releaseGeometryInstances: false,
+    appearance: new PerInstanceColorAppearance({
+      translucent: primitiveName === "translucentPrimitive" ? true : false,
+    }),
+    asynchronous: false,
+    allowPicking: true,
   });
   // see https://github.com/geosolutions-it/MapStore2/blob/9f6f9d498796180ff59679887d300ce51e72a289/web/client/components/map/cesium/Map.jsx#L354-L393
   // primitive._msGetFeatureById = (id) => {
@@ -307,21 +308,42 @@ const createPrimitiveFromMeshes = (meshes, options, center, primitiveName) => {
   return primitive;
 };
 
+const getTerrainHeight = async (longitude, latitude) => {
+  const terrainProvider = viewer.terrainProvider;
+  const height = await sampleTerrainMostDetailed(terrainProvider, [
+    Cartographic.fromDegrees(longitude, latitude),
+    false
+  ]);
+  return height[0].height;
+};
+
 loadIfcModel("asset/3d/building.ifc").then(async (data) => {
   const ifcAsJSON = await ifcDataToJSON({ data: data.modelData, ifcApi });
-  console.log(ifcAsJSON);
-  let primitives = new PrimitiveCollection({destroyPrimitives: true});
+  let primitives = new PrimitiveCollection({ destroyPrimitives: true });
   const { meshes, center } = ifcAsJSON;
-  const translucentPrimitive = createPrimitiveFromMeshes(meshes, {center: [71.4367857, 51.1194751, 400]}, [71.4367857, 51.1194751, 400], 'translucentPrimitive');
-  const opaquePrimitive = createPrimitiveFromMeshes(meshes, {center: [71.4367857, 51.1194751, 400]}, [71.4367857, 51.1194751, 400], 'opaquePrimitive');
+  const translucentPrimitive = createPrimitiveFromMeshes(
+    meshes,
+    { center: [placement.lon, placement.lat, placement.height] },
+    [placement.lon, placement.lat, placement.height],
+    "translucentPrimitive"
+  );
+  console.log(await getTerrainHeight(placement.lon, placement.lat));
+  const opaquePrimitive = createPrimitiveFromMeshes(
+    meshes,
+    { center: [placement.lon, placement.lat, placement.height] },
+    [placement.lon, placement.lat, placement.height],
+    "opaquePrimitive"
+  );
   primitives.add(translucentPrimitive);
   primitives.add(opaquePrimitive);
-  updatePrimitivesPosition(primitives, [71.4367857, 51.1194751, 400])
-  console.log(primitives)
-  viewer.scene.primitives.add(primitives)
+  updatePrimitivesPosition(primitives, [
+    placement.lon,
+    placement.lat,
+    await getTerrainHeight(placement.lon, placement.lat)
+  ]);
+  viewer.scene.primitives.add(primitives);
 });
 
-// console.log('version', version)
 // Fly the camera to San Francisco at the given longitude, latitude, and height.
 viewer.camera.flyTo({
   destination: Cartesian3.fromDegrees(71.4367857, 51.1194751, 800),
